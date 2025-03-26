@@ -1,0 +1,97 @@
+#!/bin/bash
+
+set -eu
+
+hlp() {
+  cat << EOF
+Usage: $0 [OPTIONS] <PROJECT_ID> <DATASET_ID>
+
+Options:
+    -b    Encode the CSV files with a BOM
+    -e    Encrypt the resulting ZIP archive
+    -h    Display this help and exit
+EOF
+}
+
+add_bom='false'
+encrypt='false'
+
+while getopts ':beh' opt; do
+  case "${opt}" in
+    'b')
+      add_bom='true'
+      ;;
+    'e')
+      encrypt='true'
+      ;;
+    'h')
+      hlp
+      exit 0
+      ;;
+    '?')
+      hlp >&2
+      exit 1
+      ;;
+  esac
+done
+
+readonly add_bom encrypt
+
+shift "$(( OPTIND - 1 ))"  # Discard the options and sentinel.
+
+if (( $# < 2 )); then
+  hlp >&2
+  exit 1
+fi
+
+readonly project_id="$1"
+readonly dataset_id="$2"
+
+if ! table_ids="$(
+  # `bq ls` command prints error messages to stdout.
+  bq --format='json' --project_id="${project_id}" ls -n=1000 "${dataset_id}" \
+    | jq -r '.[] | .tableReference.tableId' 2> /dev/null
+)"; then
+  printf '%s\n' "Error: Invalid reference to \`${project_id}\`:${dataset_id}" >&2
+  exit 1
+fi
+
+readonly table_ids
+
+if [[ -z "${table_ids}" ]]; then
+  printf '%s\n' "Error: No tables found in dataset ${dataset_id}" >&2
+  exit 1
+fi
+
+now="$(date +'%Y%m%dT%H%M%S')"
+readonly now
+
+readonly dst="${HOME}/bq_exports/${project_id}/${dataset_id}_${now}"
+
+mkdir -p "${dst}"
+
+while IFS= read -r table_id; do
+  printf '%s' "Exporting table ${table_id} ... "
+
+  {
+    [[ "${add_bom}" == 'true' ]] && printf '\xEF\xBB\xBF'
+
+    bq --format='csv' --project_id="${project_id}" query --use_legacy_sql='false' -n=1000000 \
+      "SELECT * FROM ${dataset_id}.${table_id};"
+  } > "${dst}/${table_id}_${now}.csv"
+
+  echo 'done'
+done <<< "${table_ids}"
+
+if [[ "${encrypt}" == 'true' ]]; then
+  echo
+  echo 'Compressing CSV files ...'
+  zip -ejqr "${dst}.zip" "${dst}"
+
+  cloudshell dl "${dst}.zip"
+else
+  cloudshell dl "${dst}"
+fi
+
+echo
+echo 'Export complete'
