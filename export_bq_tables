@@ -1,0 +1,95 @@
+#!/bin/bash
+
+set -eu
+
+hlp() {
+  cat << EOF
+Usage: $0 [OPTIONS] <PROJECT_ID> <DATASET_ID>
+
+Options:
+    -b    Encode the CSV files with a BOM
+    -e    Encrypt the resulting ZIP archive
+    -h    Display this help and exit
+EOF
+}
+
+ADD_BOM='false'
+ENCRYPT='false'
+
+while getopts ':beh' opt; do
+  case "${opt}" in
+    'b')
+      ADD_BOM='true'
+      ;;
+    'e')
+      ENCRYPT='true'
+      ;;
+    'h')
+      hlp
+      exit 0
+      ;;
+    '?')
+      hlp >&2
+      exit 1
+      ;;
+  esac
+done
+
+readonly ADD_BOM ENCRYPT
+
+shift "$(( OPTIND - 1 ))"  # Discard the options and sentinel.
+
+if (( "$#" < 2 )); then
+  hlp >&2
+  exit 1
+fi
+
+readonly PROJECT_ID="$1"
+readonly DATASET_ID="$2"
+
+# Get the list of tables.
+TABLE_IDS="$(
+  bq --format='json' --project_id="${PROJECT_ID}" ls -n=1000 "${DATASET_ID}" \
+    | jq -r '.[] | .tableReference.tableId'
+)"
+readonly TABLE_IDS
+
+if [[ -z "${TABLE_IDS}" ]]; then
+  printf '%s\n' "Error: No tables found in dataset ${DATASET_ID}" >&2
+  exit 1
+fi
+
+NOW="$(date +'%Y%m%dT%H%M%S')"
+readonly NOW
+readonly DST="${HOME}/bq_exports/${PROJECT_ID}/${DATASET_ID}_${NOW}"
+
+mkdir -p "${DST}"
+
+while IFS= read -r table_id; do
+  printf '%s' "Exporting table ${table_id} ... "
+
+  {
+    if [[ "${ADD_BOM}" == 'true' ]]; then
+      printf '\xEF\xBB\xBF'
+    fi
+
+    bq --format='csv' --project_id="${PROJECT_ID}" query --use_legacy_sql='false' -n=1000000 \
+      "SELECT * FROM ${DATASET_ID}.${table_id};"
+  } \
+  > "${DST}/${table_id}_${NOW}.csv"
+
+  echo 'done.'
+done <<< "${TABLE_IDS}"
+
+echo
+echo 'Compressing CSV files ...'
+
+if [[ "${ENCRYPT}" == 'true' ]]; then
+  zip -ejqr "${DST}.zip" "${DST}"
+  cloudshell dl "${DST}.zip"
+else
+  cloudshell dl "${DST}"
+fi
+
+echo
+echo 'Export complete'
