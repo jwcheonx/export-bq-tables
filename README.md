@@ -11,5 +11,6 @@ as CSV files and downloads them to the local machine.
 
 ## Output
 
-The script creates a directory at `~/bq_exports/<PROJECT_ID>/<DATASET_ID>_<TIMESTAMP>/`,
-which contains CSV files for each table in the dataset.
+- The script creates a directory at `~/bq_exports/<PROJECT_ID>/<DATASET_ID>_<TIMESTAMP>/`,
+  which contains CSV files for each table in the dataset.
+- The CSV files are encoded in UTF-8, without a BOM by default.
