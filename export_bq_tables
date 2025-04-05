@@ -64,14 +64,17 @@ if [[ -z "${table_ids}" ]]; then
 fi
 
 now="$(date +'%Y%m%dT%H%M%S')"
-readonly now
+declare -xr now
 
-readonly dst="${HOME}/bq_exports/${project_id}/${dataset_id}_${now}"
-
+declare -xr dst="${HOME}/bq_exports/${project_id}/${dataset_id}_${now}"
 mkdir -p "${dst}"
 
-while IFS= read -r table_id; do
-  printf '%s' "Exporting table ${table_id} ... "
+export project_id dataset_id add_bom
+
+export_table() {
+  local -r table_id="$1"
+
+  printf '%s\n' "Exporting table ${table_id} ..."
 
   {
     [[ "${add_bom}" == 'true' ]] && printf '\xEF\xBB\xBF'
@@ -79,9 +82,12 @@ while IFS= read -r table_id; do
     bq --format='csv' --project_id="${project_id}" query --use_legacy_sql='false' -n=1000000 \
       "SELECT * FROM ${dataset_id}.${table_id};"
   } > "${dst}/${table_id}_${now}.csv"
+}
 
-  echo 'done'
-done <<< "${table_ids}"
+export -f export_table
+
+xargs -L 1 -P 0 \
+  bash -c 'export_table "$@"' _ <<< "${table_ids}"
 
 if [[ "${encrypt}" == 'true' ]]; then
   echo
